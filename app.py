@@ -8,7 +8,7 @@ import base64
 
 # Mobile-friendly setup
 st.set_page_config(
-    page_title="Bitcoin Live Tracker",
+    page_title="BitNode BTC Live Tracker",
     page_icon="₿",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -25,6 +25,12 @@ st.markdown("""
     }
     .share-box {
         background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .success-box {
+        background-color: #d4edda;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
@@ -176,52 +182,58 @@ def main():
     tracker = BitcoinTracker()
     
     # Title and sharing section
-    st.title("₿ Bitcoin Live Tracker")
-    st.markdown("Real-time network data and price • No login required")
+    st.title("₿ BitNode BTC Live Tracker")
+    st.markdown("Real-time Bitcoin network data • No login required")
+    
+    # SUCCESS MESSAGE - Your site is live!
+    st.markdown('<div class="success-box">', unsafe_allow_html=True)
+    st.success("🎉 **YOUR DASHBOARD IS LIVE!** Share it with friends:")
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # SHARING SECTION - Always visible
     with st.container():
         st.markdown('<div class="share-box">', unsafe_allow_html=True)
         
-        # Replace with your actual Streamlit URL
-        DASHBOARD_URL = "https://yourusername-bitcoin-dashboard.streamlit.app/"
+        # YOUR ACTUAL URL
+        DASHBOARD_URL = "https://bitnodebtc.streamlit.app/"
         
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            st.subheader("🚀 Share with Friends")
-            st.write("**Works instantly - no setup needed!**")
+            st.subheader("🚀 Share Instantly")
+            st.write("**Copy this link:**")
             st.code(DASHBOARD_URL)
             
             if st.button("📋 Copy Link", use_container_width=True, key="copy_main"):
-                st.success("Link copied! Send to friends 📱")
+                st.success("✅ Link copied! Send to friends 📱")
             
             st.write("**Quick share to:**")
             share_col1, share_col2, share_col3 = st.columns(3)
             with share_col1:
-                if st.button("WhatsApp", use_container_width=True):
-                    st.info("Paste link in WhatsApp")
+                if st.button("WhatsApp", use_container_width=True, key="wa"):
+                    st.info("Paste: bitnodebtc.streamlit.app")
             with share_col2:
-                if st.button("Telegram", use_container_width=True):
-                    st.info("Paste link in Telegram") 
+                if st.button("Telegram", use_container_width=True, key="tg"):
+                    st.info("Paste: bitnodebtc.streamlit.app")
             with share_col3:
-                if st.button("Email", use_container_width=True):
-                    st.info("Paste link in email")
+                if st.button("Copy Only", use_container_width=True, key="copy2"):
+                    st.success("URL copied! 👆")
         
         with col2:
             st.write("**Scan QR Code:**")
             qr_image = generate_qr_code(DASHBOARD_URL)
             st.markdown(f'<img src="data:image/png;base64,{qr_image}" width="120">', 
                        unsafe_allow_html=True)
+            st.caption("Point phone camera")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Refresh button
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.subheader("📊 Live Metrics")
+        st.subheader("📊 Live Bitcoin Data")
     with col2:
-        if st.button("🔄 Update", key="refresh_main"):
+        if st.button("🔄 Update Now", key="refresh_main"):
             with st.spinner("Getting latest data..."):
                 if tracker.update_data():
                     st.success("Data updated!")
@@ -238,7 +250,7 @@ def main():
         
         # BTC Price (highlighted)
         st.metric(
-            label="BTC Price (USD)",
+            label="🎯 BTC Price (USD)",
             value=f"${latest['btc_price']:,.2f}",
             delta=None
         )
@@ -248,21 +260,21 @@ def main():
         
         with col1:
             st.metric(
-                label="Total Nodes",
+                label="🌐 Total Nodes",
                 value=f"{latest['total_nodes']:,}",
                 delta=f"{trend_direction} {abs(current_trend):.1f}%"
             )
         
         with col2:
             st.metric(
-                label="Tor Nodes",
+                label="🕵️ Tor Nodes",
                 value=f"{latest['tor_nodes']:,}",
                 delta=None
             )
         
         with col3:
             st.metric(
-                label="Tor Privacy", 
+                label="🔒 Tor Privacy", 
                 value=f"{latest['tor_percentage']:.1f}%",
                 delta=None
             )
@@ -271,39 +283,45 @@ def main():
         last_time = tracker.df.iloc[-1]['timestamp']
         if isinstance(last_time, str):
             last_time = pd.to_datetime(last_time)
-        st.caption(f"🕒 Last update: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption(f"🕒 Updated: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        st.info("📱 Tap 'Update Now' above to load live data!")
     
-    # Historical trends (simplified for mobile)
+    # Historical trends
     if len(tracker.df) > 1:
         st.markdown("---")
         st.subheader("📈 Network Health")
         
         chart_df = tracker.df.tail(10)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             avg_tor = chart_df['tor_percentage'].mean()
             st.metric("Avg Tor %", f"{avg_tor:.1f}%")
         with col2:
             avg_trend = chart_df['node_trend'].mean()
-            st.metric("Avg Trend", f"{avg_trend:.1f}%")
+            trend_icon = "📈" if avg_trend > 0 else "📉" if avg_trend < 0 else "➡️"
+            st.metric("Avg Trend", f"{trend_icon} {avg_trend:.1f}%")
+        with col3:
+            total_updates = len(tracker.df)
+            st.metric("Data Points", f"{total_updates}")
     
     # Info section
-    with st.expander("ℹ️ About This Dashboard", expanded=True):
+    with st.expander("ℹ️ About BitNode BTC", expanded=True):
         st.markdown("""
         **What You're Seeing:**
         
-        🤑 **BTC Price** - Live Bitcoin price from multiple sources
-        🌐 **Total Nodes** - Computers running Bitcoin software worldwide  
+        🎯 **BTC Price** - Live Bitcoin price from multiple exchanges
+        🌐 **Total Nodes** - Computers running Bitcoin worldwide  
         🕵️ **Tor Nodes** - Nodes using Tor for privacy
-        📊 **Tor %** - Percentage of private nodes (higher = more private)
+        🔒 **Tor %** - Network privacy level (higher = better)
         📈 **Trend** - Network growth/decline vs last update
         
         **How to Use:**
-        - Tap **🔄 Update** to refresh data
-        - Share the link with friends
-        - Works on any device
-        - No login or setup needed
+        - Tap **🔄 Update Now** for fresh data
+        - Share **bitnodebtc.streamlit.app** with friends
+        - Works on all devices instantly
+        - No login or setup ever needed
         
         **Perfect for:**
         - Tracking Bitcoin network health
@@ -314,10 +332,9 @@ def main():
         *Data updates every time you tap Refresh*
         """)
     
-    # Auto-refresh every 5 minutes
-    if st.button("🤖 Enable Auto-Refresh", key="auto_refresh"):
-        st.info("Auto-refresh: Come back and tap Update button")
-        st.rerun()
+    # Footer
+    st.markdown("---")
+    st.caption("Made with Streamlit • Data from Bitnodes.io & Binance API")
 
 if __name__ == "__main__":
     main()
