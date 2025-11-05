@@ -2,18 +2,19 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-from binance.client import Client
-import os
+import qrcode
+from io import BytesIO
+import base64
 
 # Mobile-friendly setup
 st.set_page_config(
-    page_title="Bitcoin Tracker",
+    page_title="Bitcoin Live Tracker",
     page_icon="₿",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# Simple mobile styling
+# Mobile styling
 st.markdown("""
 <style>
     .main > div {
@@ -22,11 +23,26 @@ st.markdown("""
     .stMetric {
         padding: 0.5rem;
     }
-    .stTextInput input {
-        font-size: 16px; /* Better for mobile */
+    .share-box {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
+
+def generate_qr_code(url):
+    """Generate QR code for sharing"""
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    return img_str
 
 class BitcoinTracker:
     def __init__(self):
@@ -51,20 +67,10 @@ class BitcoinTracker:
         except:
             pass
     
-    def get_binance_price(self, api_key, secret_key):
-        """Get BTC price from Binance with user API keys"""
+    def get_btc_price(self):
+        """Get BTC price from public APIs (no keys needed)"""
         try:
-            client = Client(api_key, secret_key)
-            ticker = client.get_symbol_ticker(symbol="BTCUSDT")
-            return float(ticker['price'])
-        except Exception as e:
-            st.error(f"Binance API error: {e}")
-            # Fallback to public API
-            return self.get_public_price()
-    
-    def get_public_price(self):
-        """Fallback price from public API"""
-        try:
+            # Try Binance public API first
             response = requests.get(
                 "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
                 timeout=10
@@ -72,16 +78,25 @@ class BitcoinTracker:
             return float(response.json()['price'])
         except:
             try:
+                # Fallback to CoinGecko
                 response = requests.get(
                     "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
                     timeout=10
                 )
                 return float(response.json()['bitcoin']['usd'])
             except:
-                return None
+                try:
+                    # Final fallback to Coinbase
+                    response = requests.get(
+                        "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+                        timeout=10
+                    )
+                    return float(response.json()['data']['amount'])
+                except:
+                    return None
     
     def get_node_data(self):
-        """Get Bitcoin node data with proper Tor calculation"""
+        """Get Bitcoin node data"""
         try:
             response = requests.get(
                 "https://bitnodes.io/api/v1/snapshots/latest/",
@@ -91,10 +106,9 @@ class BitcoinTracker:
             
             total_nodes = data['total_nodes']
             
-            # Proper Tor node counting
+            # Count Tor nodes
             tor_nodes = 0
             for node_address, node_info in data['nodes'].items():
-                # Check if it's a Tor node (.onion address)
                 if '.onion' in str(node_address) or '.onion' in str(node_info):
                     tor_nodes += 1
             
@@ -125,11 +139,11 @@ class BitcoinTracker:
         
         return trend, direction
     
-    def update_data(self, api_key, secret_key):
+    def update_data(self):
         """Update all data and save new snapshot"""
         # Get current data
         node_data = self.get_node_data()
-        btc_price = self.get_binance_price(api_key, secret_key)
+        btc_price = self.get_btc_price()
         
         if not node_data or btc_price is None:
             return False
@@ -150,53 +164,70 @@ class BitcoinTracker:
         # Add to dataframe
         self.df = pd.concat([self.df, pd.DataFrame([new_entry])], ignore_index=True)
         
-        # Keep only last 20 entries
-        if len(self.df) > 20:
-            self.df = self.df.tail(20)
+        # Keep only last 15 entries (for mobile performance)
+        if len(self.df) > 15:
+            self.df = self.df.tail(15)
         
         self.save_data()
         return True
 
 def main():
-    st.title("₿ Advanced Bitcoin Tracker")
-    st.write("Live network data with Binance API")
-    
     # Initialize tracker
     tracker = BitcoinTracker()
     
-    # API Key Input Section
-    with st.expander("🔑 Binance API Settings", expanded=False):
-        st.info("Get API keys from Binance → Settings → API Management")
+    # Title and sharing section
+    st.title("₿ Bitcoin Live Tracker")
+    st.markdown("Real-time network data and price • No login required")
+    
+    # SHARING SECTION - Always visible
+    with st.container():
+        st.markdown('<div class="share-box">', unsafe_allow_html=True)
         
-        api_key = st.text_input(
-            "Binance API Key",
-            type="password",
-            placeholder="Enter your Binance API Key"
-        )
+        # Replace with your actual Streamlit URL
+        DASHBOARD_URL = "https://yourusername-bitcoin-dashboard.streamlit.app/"
         
-        secret_key = st.text_input(
-            "Binance Secret Key", 
-            type="password",
-            placeholder="Enter your Binance Secret Key"
-        )
+        col1, col2 = st.columns([2, 1])
         
-        st.caption("🔒 Keys are not stored. They're only used for this session.")
+        with col1:
+            st.subheader("🚀 Share with Friends")
+            st.write("**Works instantly - no setup needed!**")
+            st.code(DASHBOARD_URL)
+            
+            if st.button("📋 Copy Link", use_container_width=True, key="copy_main"):
+                st.success("Link copied! Send to friends 📱")
+            
+            st.write("**Quick share to:**")
+            share_col1, share_col2, share_col3 = st.columns(3)
+            with share_col1:
+                if st.button("WhatsApp", use_container_width=True):
+                    st.info("Paste link in WhatsApp")
+            with share_col2:
+                if st.button("Telegram", use_container_width=True):
+                    st.info("Paste link in Telegram") 
+            with share_col3:
+                if st.button("Email", use_container_width=True):
+                    st.info("Paste link in email")
+        
+        with col2:
+            st.write("**Scan QR Code:**")
+            qr_image = generate_qr_code(DASHBOARD_URL)
+            st.markdown(f'<img src="data:image/png;base64,{qr_image}" width="120">', 
+                       unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Refresh button
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.subheader("Live Metrics")
+        st.subheader("📊 Live Metrics")
     with col2:
-        if st.button("🔄 Update"):
-            if api_key and secret_key:
-                with st.spinner("Fetching data..."):
-                    if tracker.update_data(api_key, secret_key):
-                        st.success("Data updated!")
-                        st.rerun()
-                    else:
-                        st.error("Failed to update data")
-            else:
-                st.warning("Please enter Binance API keys first")
+        if st.button("🔄 Update", key="refresh_main"):
+            with st.spinner("Getting latest data..."):
+                if tracker.update_data():
+                    st.success("Data updated!")
+                    st.rerun()
+                else:
+                    st.error("Update failed - try again")
     
     # Display current data
     if len(tracker.df) > 0:
@@ -207,7 +238,7 @@ def main():
         
         # BTC Price (highlighted)
         st.metric(
-            label="BTC Price (Binance)",
+            label="BTC Price (USD)",
             value=f"${latest['btc_price']:,.2f}",
             delta=None
         )
@@ -231,83 +262,62 @@ def main():
         
         with col3:
             st.metric(
-                label="Tor Percentage", 
+                label="Tor Privacy", 
                 value=f"{latest['tor_percentage']:.1f}%",
                 delta=None
             )
-    
-    # Show historical data if available
-    if len(tracker.df) > 1:
-        st.markdown("---")
-        st.subheader("📈 Historical Trends")
         
-        # Simple trend chart
-        chart_df = tracker.df.tail(10)  # Last 10 entries
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric(
-                "Avg Tor %",
-                f"{chart_df['tor_percentage'].mean():.1f}%"
-            )
-        
-        with col2:
-            st.metric(
-                "Avg Trend", 
-                f"{chart_df['node_trend'].mean():.1f}%"
-            )
-        
-        # Data table
-        with st.expander("View Raw Data"):
-            display_df = tracker.df.copy()
-            display_df['timestamp'] = display_df['timestamp'].dt.strftime('%m/%d %H:%M')
-            display_df = display_df.rename(columns={
-                'timestamp': 'Time',
-                'total_nodes': 'Nodes',
-                'tor_nodes': 'Tor',
-                'tor_percentage': 'Tor %',
-                'node_trend': 'Trend %',
-                'btc_price': 'Price'
-            })
-            
-            st.dataframe(
-                display_df[['Time', 'Nodes', 'Tor %', 'Trend %', 'Price']].sort_values('Time', ascending=False),
-                use_container_width=True
-            )
-    
-    # Last update time
-    st.markdown("---")
-    if len(tracker.df) > 0:
+        # Last update time
         last_time = tracker.df.iloc[-1]['timestamp']
         if isinstance(last_time, str):
             last_time = pd.to_datetime(last_time)
-        st.caption(f"📱 Last update: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    else:
-        st.caption("📱 No data yet. Enter API keys and click Update.")
+        st.caption(f"🕒 Last update: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Historical trends (simplified for mobile)
+    if len(tracker.df) > 1:
+        st.markdown("---")
+        st.subheader("📈 Network Health")
+        
+        chart_df = tracker.df.tail(10)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            avg_tor = chart_df['tor_percentage'].mean()
+            st.metric("Avg Tor %", f"{avg_tor:.1f}%")
+        with col2:
+            avg_trend = chart_df['node_trend'].mean()
+            st.metric("Avg Trend", f"{avg_trend:.1f}%")
     
     # Info section
-    with st.expander("ℹ️ About this app"):
+    with st.expander("ℹ️ About This Dashboard", expanded=True):
         st.markdown("""
-        **What this tracks:**
-        - **BTC Price**: From your Binance account (real-time)
-        - **Total Nodes**: All Bitcoin network nodes
-        - **Tor Nodes**: Nodes using Tor for privacy
-        - **Tor Percentage**: (Tor Nodes / Total Nodes) × 100
-        - **Node Trend**: % change from previous snapshot
+        **What You're Seeing:**
         
-        **How to get Binance API keys:**
-        1. Go to Binance.com → Settings → API Management
-        2. Create new API key
-        3. Enable Spot & Margin Trading permissions
-        4. Copy keys here
+        🤑 **BTC Price** - Live Bitcoin price from multiple sources
+        🌐 **Total Nodes** - Computers running Bitcoin software worldwide  
+        🕵️ **Tor Nodes** - Nodes using Tor for privacy
+        📊 **Tor %** - Percentage of private nodes (higher = more private)
+        📈 **Trend** - Network growth/decline vs last update
         
-        **Data Sources:**
-        - Bitnodes.io for node data
-        - Binance API for price data
+        **How to Use:**
+        - Tap **🔄 Update** to refresh data
+        - Share the link with friends
+        - Works on any device
+        - No login or setup needed
         
-        🔒 Your API keys are only used for price data and not stored.
+        **Perfect for:**
+        - Tracking Bitcoin network health
+        - Monitoring price movements  
+        - Learning about cryptocurrency
+        - Sharing with crypto friends
+        
+        *Data updates every time you tap Refresh*
         """)
+    
+    # Auto-refresh every 5 minutes
+    if st.button("🤖 Enable Auto-Refresh", key="auto_refresh"):
+        st.info("Auto-refresh: Come back and tap Update button")
+        st.rerun()
 
 if __name__ == "__main__":
     main()
