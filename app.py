@@ -4,19 +4,18 @@ import pandas as pd
 import json
 import os
 from datetime import datetime, timedelta
-import qrcode
-from io import BytesIO
-import base64
+import plotly.graph_objects as go
+import plotly.express as px
 
 # Mobile-friendly setup
 st.set_page_config(
-    page_title="BitNode BTC Pro Tracker",
+    page_title="Abdullah's Bitcoin Tracker",
     page_icon="₿",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# Mobile styling
+# Mobile styling with Abdullah's trademark
 st.markdown("""
 <style>
     .main > div {
@@ -24,12 +23,6 @@ st.markdown("""
     }
     .stMetric {
         padding: 0.5rem;
-    }
-    .share-box {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
     }
     .signal-buy {
         background-color: #d4edda;
@@ -52,20 +45,21 @@ st.markdown("""
         margin: 0.5rem 0;
         border-left: 4px solid #ffc107;
     }
+    .trademark {
+        text-align: center;
+        color: #666;
+        font-size: 0.8rem;
+        margin-top: 1rem;
+    }
+    .feature-box {
+        background-color: #e7f3ff;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+        border-left: 4px solid #0d6efd;
+    }
 </style>
 """, unsafe_allow_html=True)
-
-def generate_qr_code(url):
-    """Generate QR code for sharing"""
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    buffered = BytesIO()
-    img.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    return img_str
 
 class BitcoinNodeAnalyzer:
     def __init__(self, data_file="network_data.json"):
@@ -155,6 +149,32 @@ class BitcoinNodeAnalyzer:
         
         return closest_snapshot['total_nodes'] if closest_snapshot else None
     
+    def get_previous_tor_percentage(self):
+        """Get previous day's Tor percentage for trend analysis"""
+        if len(self.historical_data) < 2:
+            return None
+        
+        # Get yesterday's data (look for data from ~24 hours ago)
+        current_time = datetime.now()
+        target_time = current_time - timedelta(hours=24)
+        
+        # Find the closest snapshot to 24 hours ago
+        closest_snapshot = None
+        min_time_diff = float('inf')
+        
+        for snapshot in self.historical_data[:-1]:  # Exclude current
+            try:
+                snapshot_time = datetime.fromisoformat(snapshot['timestamp'])
+                time_diff = abs((snapshot_time - target_time).total_seconds())
+                
+                if time_diff < min_time_diff:
+                    min_time_diff = time_diff
+                    closest_snapshot = snapshot
+            except:
+                continue
+        
+        return closest_snapshot['tor_percentage'] if closest_snapshot else None
+    
     def calculate_network_signal(self, current_data):
         """Calculate trading signal based on network trends"""
         previous_total = self.get_previous_total_nodes()
@@ -192,6 +212,36 @@ class BitcoinNodeAnalyzer:
             'suggestion': suggestion
         }
     
+    def calculate_tor_trend(self, current_tor_percentage):
+        """Calculate Tor trend and market bias"""
+        previous_tor_percentage = self.get_previous_tor_percentage()
+        
+        if previous_tor_percentage is None or previous_tor_percentage == 0:
+            return {
+                'previous_tor': "No data",
+                'current_tor': current_tor_percentage,
+                'tor_trend': 0,
+                'bias': "INSUFFICIENT_DATA"
+            }
+        
+        # Calculate Tor Trend using your formula
+        tor_trend = (current_tor_percentage - previous_tor_percentage) / previous_tor_percentage
+        
+        # Determine market bias based on your rules
+        if tor_trend > 0.001:  # Small threshold to account for minor fluctuations
+            bias = "BEARISH (Sell Bias)"
+        elif tor_trend < -0.001:
+            bias = "BULLISH (Buy Bias)"
+        else:
+            bias = "NEUTRAL"
+        
+        return {
+            'previous_tor': round(previous_tor_percentage, 2),
+            'current_tor': round(current_tor_percentage, 2),
+            'tor_trend': round(tor_trend * 100, 2),  # Convert to percentage
+            'bias': bias
+        }
+    
     def update_network_data(self):
         """Fetch new data and update historical records"""
         current_data = self.fetch_node_data()
@@ -201,50 +251,70 @@ class BitcoinNodeAnalyzer:
         # Add to historical data
         self.historical_data.append(current_data)
         
-        # Keep only last 7 days of data (approx 1008 snapshots if updating every 10 minutes)
+        # Keep only last 7 days of data
         if len(self.historical_data) > 1008:
             self.historical_data = self.historical_data[-1008:]
         
         self.save_historical_data()
         return True
+    
+    def plot_tor_trend_chart(self):
+        """Plot Tor percentage trend over time"""
+        if len(self.historical_data) < 2:
+            return None
+        
+        # Prepare data for plotting
+        dates = []
+        tor_percentages = []
+        
+        for entry in self.historical_data[-24:]:  # Last 24 data points
+            try:
+                date = datetime.fromisoformat(entry['timestamp']).strftime('%H:%M')
+                dates.append(date)
+                tor_percentages.append(entry['tor_percentage'])
+            except:
+                continue
+        
+        if len(dates) < 2:
+            return None
+        
+        # Create plot
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=dates,
+            y=tor_percentages,
+            mode='lines+markers',
+            name='Tor %',
+            line=dict(color='#FF6B6B', width=3),
+            marker=dict(size=6)
+        ))
+        
+        fig.update_layout(
+            title="Tor Percentage Trend (Last 24 Hours)",
+            xaxis_title="Time",
+            yaxis_title="Tor Percentage (%)",
+            height=300,
+            showlegend=True,
+            template="plotly_white"
+        )
+        
+        return fig
 
 def main():
-    # Initialize analyzers
+    # Initialize analyzer
     analyzer = BitcoinNodeAnalyzer()
     
-    # Title and sharing section
-    st.title("₿ BitNode BTC Pro Tracker")
-    st.markdown("Live Network Analysis • Tor Metrics • Trading Signals")
-    
-    # SHARING SECTION
-    with st.container():
-        st.markdown('<div class="share-box">', unsafe_allow_html=True)
-        
-        DASHBOARD_URL = "https://bitnodebtc.streamlit.app/"
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("🚀 Share Dashboard")
-            st.code(DASHBOARD_URL)
-            
-            if st.button("📋 Copy Link", use_container_width=True, key="copy_main"):
-                st.success("✅ Dashboard link copied!")
-        
-        with col2:
-            st.write("**Scan QR Code:**")
-            qr_image = generate_qr_code(DASHBOARD_URL)
-            st.markdown(f'<img src="data:image/png;base64,{qr_image}" width="120">', 
-                       unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Header with Abdullah's trademark
+    st.title("₿ Abdullah's Bitcoin Tracker")
+    st.markdown("Tor Node Trend Analyzer • Network Signals")
     
     # Refresh button
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.subheader("📊 Live Network Data")
+        st.subheader("📊 Live Analysis")
     with col2:
-        if st.button("🔄 Update All", key="refresh_main"):
+        if st.button("🔄 Update Data", key="refresh_main"):
             with st.spinner("Analyzing network data..."):
                 if analyzer.update_network_data():
                     st.success("Data updated!")
@@ -255,9 +325,8 @@ def main():
     # Get current data
     if len(analyzer.historical_data) > 0:
         current_data = analyzer.historical_data[-1]
-        signal_data = analyzer.calculate_network_signal(current_data)
         
-        # Display current price (optional - you can remove if not needed)
+        # Display current price
         try:
             price_response = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5)
             btc_price = float(price_response.json()['price'])
@@ -269,9 +338,49 @@ def main():
         except:
             pass
         
+        # TOR TREND ANALYZER SECTION (NEW FEATURE)
+        st.markdown("---")
+        st.subheader("🕵️ Tor Node Trend Analyzer")
+        
+        # Calculate Tor trend
+        tor_trend_data = analyzer.calculate_tor_trend(current_data['tor_percentage'])
+        
+        # Display Tor trend results
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Previous Tor %", f"{tor_trend_data['previous_tor']}%")
+        
+        with col2:
+            st.metric("Current Tor %", f"{tor_trend_data['current_tor']}%")
+        
+        with col3:
+            trend_value = tor_trend_data['tor_trend']
+            st.metric("Tor Trend", f"{trend_value:+.2f}%")
+        
+        # Display market bias with color coding
+        if tor_trend_data['bias'] == "BEARISH (Sell Bias)":
+            bias_class = "signal-sell"
+            emoji = "📉"
+            bias_text = "SELL BIAS"
+        elif tor_trend_data['bias'] == "BULLISH (Buy Bias)":
+            bias_class = "signal-buy"
+            emoji = "📈"
+            bias_text = "BUY BIAS"
+        else:
+            bias_class = "signal-neutral"
+            emoji = "➡️"
+            bias_text = "NEUTRAL"
+        
+        st.markdown(f'<div class="{bias_class}">', unsafe_allow_html=True)
+        st.markdown(f"### → Market Bias: {bias_text} {emoji}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
         # NETWORK TREND SIGNAL SECTION
         st.markdown("---")
         st.subheader("📈 Network Trend Signal")
+        
+        signal_data = analyzer.calculate_network_signal(current_data)
         
         # Display signal with color coding
         if signal_data['suggestion'] == "BUY":
@@ -304,22 +413,17 @@ def main():
         st.markdown(f"### → {signal_text} SIGNAL {emoji}")
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # TOR METRICS SECTION
+        # TOR TREND CHART
         st.markdown("---")
-        st.subheader("🕵️ Tor Network Metrics")
+        st.subheader("📊 Tor Trend Chart")
         
-        col1, col2, col3 = st.columns(3)
+        tor_chart = analyzer.plot_tor_trend_chart()
+        if tor_chart:
+            st.plotly_chart(tor_chart, use_container_width=True)
+        else:
+            st.info("Collecting more data for chart...")
         
-        with col1:
-            st.metric("Tor Nodes", f"{current_data['tor_nodes']:,}")
-        
-        with col2:
-            st.metric("Total Nodes", f"{current_data['total_nodes']:,}")
-        
-        with col3:
-            st.metric("Tor Privacy", f"{current_data['tor_percentage']:.1f}%")
-        
-        # Network Health Summary
+        # NETWORK HEALTH SUMMARY
         st.markdown("---")
         st.subheader("🌐 Network Health Summary")
         
@@ -361,40 +465,35 @@ def main():
             st.caption(f"📊 Data points: {len(analyzer.historical_data)} snapshots")
     
     else:
-        st.info("📱 Tap 'Update All' above to load network data!")
+        st.info("📱 Tap 'Update Data' above to load network data!")
     
     # Explanation Section
-    with st.expander("ℹ️ Understanding Network Signals", expanded=True):
+    with st.expander("ℹ️ Understanding Tor Trend Analysis", expanded=True):
         st.markdown("""
+        **Tor Trend Analyzer Formula:**
+        ```
+        Tor Trend = (Current Tor % - Previous Tor %) ÷ Previous Tor %
+        ```
+        
+        **Market Bias Interpretation:**
+        - **BEARISH/SELL BIAS (📉)**: Tor Trend > 0 (More privacy = Sell signal)
+        - **BULLISH/BUY BIAS (📈)**: Tor Trend < 0 (Less privacy = Buy signal)  
+        - **NEUTRAL (➡️)**: Tor Trend ≈ 0 (Stable privacy = Neutral)
+        
+        **Why This Works:**
+        - Increasing Tor % = More privacy = Often precedes price drops
+        - Decreasing Tor % = Less privacy = Often precedes price rises
+        - Based on the observation that privacy spikes correlate with bearish sentiment
+        
         **Network Trend Signal Formula:**
         ```
         Signal = (Active Nodes ÷ Total Nodes) × ((Current Total Nodes − Previous Total Nodes) ÷ Previous Total Nodes)
         ```
-        
-        **Interpretation:**
-        - **BUY Signal (🟢)**: Signal > +0.01 - Network growing with high activity
-        - **SELL Signal (🔴)**: Signal < -0.01 - Network shrinking with low activity
-        - **NEUTRAL Signal (🟡)**: -0.01 ≤ Signal ≤ +0.01 - Stable network conditions
-        
-        **Tor Privacy Levels:**
-        - **Excellent (🟢)**: >20% - Strong network privacy
-        - **Good (🟡)**: 10-20% - Moderate privacy
-        - **Low (🔴)**: <10% - Weak network privacy
-        
-        **Network Activity:**
-        - **Excellent (🟢)**: >80% nodes active
-        - **Good (🟡)**: 60-80% nodes active
-        - **Low (🔴)**: <60% nodes active
         """)
     
-    # Auto-refresh every 10 minutes
-    if st.button("⏰ Enable Auto-Refresh (10 min)", key="auto_refresh"):
-        st.info("Come back and tap 'Update All' for fresh data")
-        st.rerun()
-    
-    # Footer
+    # Abdullah's Trademark Footer
     st.markdown("---")
-    st.caption("BitNode BTC Pro Tracker • Network Analysis + Tor Metrics • Not Financial Advice")
+    st.markdown('<div class="trademark">© 2025 Abdullah\'s Bitcoin Tracker • Tor Node Trend Analyzer</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
