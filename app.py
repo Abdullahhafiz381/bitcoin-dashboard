@@ -58,8 +58,37 @@ st.markdown("""
         margin: 0.5rem 0;
         border-left: 4px solid #0d6efd;
     }
+    .price-box {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+        border: 2px solid #e9ecef;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+def get_btc_price():
+    """Get BTC price from multiple sources with fallback"""
+    try:
+        # Try Binance first
+        response = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5)
+        response.raise_for_status()
+        return float(response.json()['price'])
+    except:
+        try:
+            # Fallback to CoinGecko
+            response = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", timeout=5)
+            response.raise_for_status()
+            return float(response.json()['bitcoin']['usd'])
+        except:
+            try:
+                # Final fallback to Coinbase
+                response = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=5)
+                response.raise_for_status()
+                return float(response.json()['data']['amount'])
+            except:
+                return None
 
 class BitcoinNodeAnalyzer:
     def __init__(self, data_file="network_data.json"):
@@ -307,38 +336,66 @@ def main():
     
     # Header with Abdullah's trademark
     st.title("₿ Abdullah's Bitcoin Tracker")
-    st.markdown("Tor Node Trend Analyzer • Network Signals")
+    st.markdown("Tor Node Trend Analyzer • Network Signals • Live Price")
     
-    # Refresh button
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.subheader("📊 Live Analysis")
-    with col2:
-        if st.button("🔄 Update Data", key="refresh_main"):
-            with st.spinner("Analyzing network data..."):
-                if analyzer.update_network_data():
-                    st.success("Data updated!")
-                    st.rerun()
-                else:
-                    st.error("Update failed")
+    # ALWAYS SHOW BTC PRICE - No button needed
+    st.markdown("---")
+    st.subheader("💰 Live BTC Price")
     
-    # Get current data
-    if len(analyzer.historical_data) > 0:
-        current_data = analyzer.historical_data[-1]
+    # Get BTC price automatically (no button required)
+    btc_price = get_btc_price()
+    
+    if btc_price:
+        # Display price in a nice box
+        st.markdown('<div class="price-box">', unsafe_allow_html=True)
         
-        # Display current price
-        try:
-            price_response = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5)
-            btc_price = float(price_response.json()['price'])
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
             st.metric(
-                label="🎯 BTC Current Price",
+                label="Bitcoin Price (USD)",
                 value=f"${btc_price:,.2f}",
                 delta=None
             )
-        except:
-            pass
         
-        # TOR TREND ANALYZER SECTION (NEW FEATURE)
+        with col2:
+            st.metric(
+                label="24h Change",
+                value="Live",  # You can add actual 24h change if needed
+                delta=None
+            )
+        
+        with col3:
+            st.metric(
+                label="Status", 
+                value="🟢 Live",
+                delta=None
+            )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.caption(f"🕒 Price updated: {datetime.now().strftime('%H:%M:%S')}")
+    else:
+        st.error("❌ Could not fetch BTC price")
+    
+    # Refresh button for node data only
+    st.markdown("---")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.subheader("📊 Network Analysis")
+    with col2:
+        if st.button("🔄 Update Node Data", key="refresh_main"):
+            with st.spinner("Analyzing network data..."):
+                if analyzer.update_network_data():
+                    st.success("Node data updated!")
+                    st.rerun()
+                else:
+                    st.error("Node data update failed")
+    
+    # Get current node data
+    if len(analyzer.historical_data) > 0:
+        current_data = analyzer.historical_data[-1]
+        
+        # TOR TREND ANALYZER SECTION
         st.markdown("---")
         st.subheader("🕵️ Tor Node Trend Analyzer")
         
@@ -396,7 +453,7 @@ def main():
             emoji = "🟡"
             signal_text = "NEUTRAL"
         
-        st.markdown(f'<div class="{signal_class}">', unsafe_allow_html=True)
+        st.markdown(f'<div class="{bias_class}">', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         
@@ -458,14 +515,14 @@ def main():
         
         # Last update time
         last_time = datetime.fromisoformat(current_data['timestamp'])
-        st.caption(f"🕒 Last update: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption(f"🕒 Node data updated: {last_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Historical data info
         if len(analyzer.historical_data) > 1:
             st.caption(f"📊 Data points: {len(analyzer.historical_data)} snapshots")
     
     else:
-        st.info("📱 Tap 'Update Data' above to load network data!")
+        st.info("📱 Tap 'Update Node Data' above to load network analysis!")
     
     # Explanation Section
     with st.expander("ℹ️ Understanding Tor Trend Analysis", expanded=True):
@@ -491,9 +548,13 @@ def main():
         ```
         """)
     
+    # Auto-refresh suggestion
+    st.markdown("---")
+    st.info("💡 **Pro Tip:** The BTC price updates automatically every time you load the page. Node data updates when you click the button.")
+    
     # Abdullah's Trademark Footer
     st.markdown("---")
-    st.markdown('<div class="trademark">© 2025 Abdullah\'s Bitcoin Tracker • Tor Node Trend Analyzer</div>', unsafe_allow_html=True)
+    st.markdown('<div class="trademark">© 2024 Abdullah\'s Bitcoin Tracker • Tor Node Trend Analyzer</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
