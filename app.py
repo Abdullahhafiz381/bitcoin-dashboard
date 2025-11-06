@@ -93,7 +93,7 @@ def get_btc_price():
 class BitcoinNodeAnalyzer:
     def __init__(self, data_file="network_data.json"):
         self.data_file = data_file
-        self.bitnodes_api = "https://bitnodes.io/api/v1/snapshots/latest/"
+        self.bitnodes_api ="https://bitnodes.io/api/v1/snapshots/?limit=1"
         self.load_historical_data()
     
     def load_historical_data(self):
@@ -554,7 +554,7 @@ def main():
     
     # Abdullah's Trademark Footer
     st.markdown("---")
-    st.markdown('<div class="trademark">© 2024 Abdullah\'s Bitcoin Tracker • Tor Node Trend Analyzer</div>', unsafe_allow_html=True)
+    st.markdown('<div class="trademark">© 2025 Abdullah\'s Bitcoin Tracker • Tor Node Trend Analyzer</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
