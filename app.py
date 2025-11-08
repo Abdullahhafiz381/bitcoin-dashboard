@@ -93,7 +93,7 @@ def get_btc_price():
 class BitcoinNodeAnalyzer:
     def __init__(self, data_file="network_data.json"):
         self.data_file = data_file
-        self.bitnodes_api ="https://bitnodes.io/api/v1/snapshots/latest"
+        self.bitnodes_api ="https://bitnodes.io/api/v1/snapshots/latest/"
         self.load_historical_data()
     
     def load_historical_data(self):
