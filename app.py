@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Mobile styling with Zohaib's trademark
+# Mobile styling with Abdullah's trademark
 st.markdown("""
 <style>
     .main > div {
