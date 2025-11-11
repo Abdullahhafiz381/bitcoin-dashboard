@@ -2,642 +2,329 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import json
-import logging
-from typing import Dict, List, Tuple, Optional
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import math
+import streamlit.components.v1 as components
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# -------------------------
+# Config
+# -------------------------
+st.set_page_config(page_title="Abdullah's Bitnode Tracker", layout='wide')
 
-class BitnodeTracker:
-    def __init__(self):
-        self.coins = ["BTC", "ETH", "LTC", "BCH", "SOL", "ADA", "AVAX", "DOGE", "DOT", "LINK", "BNB"]
-        self.bitnode_api_url = "https://bitnodes.io/api/v1/snapshots/latest/"
-        self.price_api_url = "https://api.coingecko.com/api/v3/simple/price"
-        self.snapshots_history = []
-        self.cache_duration = 600  # 10 minutes in seconds
-        self.last_fetch_time = 0
-        self.price_cache = {}
-        self.price_cache_time = 0
-        
-    def fetch_bitnode_data(self) -> Optional[Dict]:
-        """Fetch data from Bitnodes API with caching and error handling"""
-        current_time = time.time()
-        
-        # Check cache
-        if current_time - self.last_fetch_time < self.cache_duration and hasattr(self, 'cached_data'):
-            logger.info("Using cached Bitnode data")
-            return self.cached_data
-            
-        try:
-            logger.info("Fetching fresh Bitnode data")
-            response = requests.get(self.bitnode_api_url, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            self.cached_data = data
-            self.last_fetch_time = current_time
-            
-            # Store in history (keep last 2 snapshots)
-            self.snapshots_history.append({
-                'timestamp': datetime.now(),
-                'data': data
-            })
-            
-            # Keep only last 2 snapshots for trend calculation
-            if len(self.snapshots_history) > 2:
-                self.snapshots_history = self.snapshots_history[-2:]
-                
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching Bitnode data: {e}")
-            # Return cached data if available, otherwise mock data
-            if hasattr(self, 'cached_data'):
-                return self.cached_data
-            else:
-                # Return realistic mock data based on actual Bitnode structure
-                mock_data = self._create_realistic_mock_data()
-                return mock_data
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return getattr(self, 'cached_data', None)
+BITNODES_SNAPSHOTS = "https://bitnodes.io/api/v1/snapshots/"
+BITNODES_LATEST = "https://bitnodes.io/api/v1/snapshots/latest/"
+COINGECKO_SIMPLE = "https://api.coingecko.com/api/v3/simple/price"
+
+TRACK_COINS = ["BTC", "ETH", "LTC", "BCH", "SOL", "ADA", "AVAX", "DOGE", "DOT", "LINK", "BNB"]
+COINGECKO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "LTC": "litecoin",
+    "BCH": "bitcoin-cash",
+    "SOL": "solana",
+    "ADA": "cardano",
+    "AVAX": "avalanche-2",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "LINK": "chainlink",
+    "BNB": "binancecoin",
+}
+
+# -------------------------
+# Styles - dark futuristic
+# -------------------------
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@400;700&display=swap');
+    .reportview-container {background: linear-gradient(180deg,#081124 0%, #0b1020 100%);} 
+    .stApp { color: #dbe9ff }
+    .neon-box { background: rgba(10,12,20,0.6); border-radius:12px; padding:16px; box-shadow: 0 8px 30px rgba(94,120,255,0.06); border:1px solid rgba(94,120,255,0.12);} 
+    .title {font-family: 'Orbitron', sans-serif; font-size:28px; color: #b8c7ff}
+    .subtitle {font-family: 'Rajdhani', sans-serif; color:#9fb0ff}
+    .small {font-size:12px; color:#9aa9d9}
+    .refresh-btn {display:flex; justify-content:flex-end}
+    .signal-buy { color: #7ef7a6; font-weight:700 }
+    .signal-sell { color: #ff8b8b; font-weight:700 }
+    .signal-side { color: #ffd97e; font-weight:700 }
+    </style>
     
-    def _create_realistic_mock_data(self) -> Dict:
-        """Create realistic mock data based on actual Bitnode API structure"""
-        # Based on actual Bitnodes API response structure
-        return {
-            'total_nodes': np.random.randint(15000, 16000),
-            'latest_height': 820000 + np.random.randint(1, 1000),
-            'nodes': {
-                '1.2.3.4:8333': ['v1.2.3', '1000'],
-                '5.6.7.8:8333': ['v1.2.3', '1000']
-            }
-        }
-    
-    def fetch_prices(self) -> Dict:
-        """Fetch current prices from CoinGecko API with fallback"""
-        current_time = time.time()
-        
-        # Cache prices for 1 minute
-        if current_time - self.price_cache_time < 60 and self.price_cache:
-            return self.price_cache
-            
-        try:
-            coin_ids = {
-                "BTC": "bitcoin",
-                "ETH": "ethereum", 
-                "LTC": "litecoin",
-                "BCH": "bitcoin-cash",
-                "SOL": "solana",
-                "ADA": "cardano",
-                "AVAX": "avalanche-2",
-                "DOGE": "dogecoin",
-                "DOT": "polkadot",
-                "LINK": "chainlink",
-                "BNB": "binancecoin"
-            }
-            
-            ids_param = ",".join(coin_ids.values())
-            url = f"{self.price_api_url}?ids={ids_param}&vs_currencies=usd&include_24hr_change=true"
-            
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Transform to our format
-            prices = {}
-            for coin, coin_id in coin_ids.items():
-                if coin_id in data:
-                    prices[coin] = {
-                        'price': data[coin_id].get('usd', 0),
-                        'change_24h': data[coin_id].get('usd_24h_change', 0)
-                    }
-            
-            self.price_cache = prices
-            self.price_cache_time = current_time
-            return prices
-            
-        except Exception as e:
-            logger.error(f"Error fetching prices: {e}")
-            # Return realistic mock prices
-            return self._get_realistic_prices()
-    
-    def _get_realistic_prices(self) -> Dict:
-        """Get realistic mock prices when API fails"""
-        mock_prices = {}
-        base_prices = {
-            "BTC": 50000, "ETH": 3000, "LTC": 70, "BCH": 250, 
-            "SOL": 100, "ADA": 0.5, "AVAX": 35, "DOGE": 0.15,
-            "DOT": 7, "LINK": 15, "BNB": 350
-        }
-        for coin in self.coins:
-            # Add some random variation to mock prices
-            variation = np.random.uniform(-0.02, 0.02)
-            base_price = base_prices.get(coin, 100)
-            mock_prices[coin] = {
-                'price': base_price * (1 + variation),
-                'change_24h': np.random.uniform(-5, 5)
-            }
-        return mock_prices
-    
-    def get_node_metrics(self) -> Dict:
-        """Get current and previous node metrics from actual Bitnode data"""
-        if len(self.snapshots_history) < 2:
-            # Create realistic initial data
-            return self._create_initial_node_metrics()
-            
-        current_data = self.snapshots_history[-1]['data']
-        previous_data = self.snapshots_history[-2]['data']
-        
-        try:
-            # Get actual data from Bitnodes API
-            current_total = current_data.get('total_nodes', 0)
-            previous_total = previous_data.get('total_nodes', 0)
-            
-            # Estimate Tor nodes based on actual Bitnode patterns (typically 2-3% are Tor)
-            tor_percentage = 0.025  # 2.5% based on real Bitcoin network data
-            current_tor = int(current_total * tor_percentage)
-            previous_tor = int(previous_total * tor_percentage)
-            
-            current_normal = current_total - current_tor
-            previous_normal = previous_total - previous_tor
-            
-            tor_change = current_tor - previous_tor
-            normal_change = current_normal - previous_normal
-            
-            # Calculate actual node growth from real data
-            total_change = current_total - previous_total
-            
-            return {
-                'current_total': current_total,
-                'previous_total': previous_total,
-                'current_tor': current_tor,
-                'previous_tor': previous_tor,
-                'current_normal': current_normal,
-                'previous_normal': previous_normal,
-                'tor_change': tor_change,
-                'normal_change': normal_change,
-                'total_change': total_change,
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-        except Exception as e:
-            logger.error(f"Error calculating node metrics: {e}")
-            return self._create_initial_node_metrics()
-    
-    def _create_initial_node_metrics(self) -> Dict:
-        """Create initial node metrics when no history exists"""
-        # Based on actual Bitcoin network statistics
-        current_total = np.random.randint(15000, 16000)
-        previous_total = current_total - np.random.randint(-50, 150)
-        tor_percentage = 0.025
-        
-        current_tor = int(current_total * tor_percentage)
-        previous_tor = int(previous_total * tor_percentage)
-        
-        return {
-            'current_total': current_total,
-            'previous_total': previous_total,
-            'current_tor': current_tor,
-            'previous_tor': previous_tor,
-            'current_normal': current_total - current_tor,
-            'previous_normal': previous_total - previous_tor,
-            'tor_change': current_tor - previous_tor,
-            'normal_change': (current_total - current_tor) - (previous_total - previous_tor),
-            'total_change': current_total - previous_total,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    
-    def calculate_tor_trend(self, node_metrics: Dict) -> Tuple[float, str, str]:
-        """Calculate Tor Trend using actual node metrics"""
-        try:
-            current_tor_pct = (node_metrics['current_tor'] / node_metrics['current_total']) * 100
-            previous_tor_pct = (node_metrics['previous_tor'] / node_metrics['previous_total']) * 100
-            
-            # Avoid division by zero
-            if previous_tor_pct == 0:
-                return 0.0, "NEUTRAL", "➡️"
-                
-            tor_trend = ((current_tor_pct - previous_tor_pct) / previous_tor_pct) * 100
-            
-            # Determine signal with realistic thresholds
-            if tor_trend > 0.5:  # More sensitive threshold
-                signal = "BEARISH"
-                emoji = "📉"
-            elif tor_trend < -0.5:
-                signal = "BULLISH" 
-                emoji = "📈"
-            else:
-                signal = "NEUTRAL"
-                emoji = "➡️"
-                
-            return tor_trend, signal, emoji
-            
-        except Exception as e:
-            logger.error(f"Error calculating Tor trend: {e}")
-            return 0.0, "NEUTRAL", "➡️"
-    
-    def calculate_network_signal(self, node_metrics: Dict) -> Tuple[float, str]:
-        """Calculate Network Signal using actual node metrics"""
-        try:
-            current_total = node_metrics['current_total']
-            previous_total = node_metrics['previous_total']
-            
-            # Avoid division by zero
-            if previous_total == 0 or current_total == 0:
-                return 0.0, "SIDEWAYS"
-            
-            # Calculate node growth percentage
-            node_growth = (current_total - previous_total) / previous_total
-            
-            # Use actual node data for signal calculation
-            # In real Bitcoin network, node growth is typically very small
-            signal_value = node_growth * 100  # Scale for better visualization
-            
-            # Determine signal based on realistic thresholds
-            if signal_value > 0.1:  # 0.1% growth
-                signal = "BUY"
-            elif signal_value < -0.1:  # 0.1% decline
-                signal = "SELL"
-            else:
-                signal = "SIDEWAYS"
-                
-            return signal_value, signal
-            
-        except Exception as e:
-            logger.error(f"Error calculating network signal: {e}")
-            return 0.0, "SIDEWAYS"
-    
-    def get_bitcoin_signal(self) -> Dict:
-        """Get overall Bitcoin signal by combining both metrics"""
-        node_metrics = self.get_node_metrics()
-        tor_trend, tor_signal, tor_emoji = self.calculate_tor_trend(node_metrics)
-        network_signal_value, network_signal = self.calculate_network_signal(node_metrics)
-        
-        # Combine signals (Network Signal takes priority, Tor Trend as bias)
-        if network_signal == "BUY":
-            final_signal = "BUY"
-        elif network_signal == "SELL":
-            final_signal = "SELL" 
+    """,
+    unsafe_allow_html=True
+)
+
+# JS auto refresh every 300000 ms (5 minutes)
+components.html("<script>setTimeout(()=>{ window.location.reload(); }, 300000);</script>", height=0)
+
+# -------------------------
+# Helper functions
+# -------------------------
+@st.cache_data(ttl=600)
+def fetch_bitnodes_snapshots(limit=2, timeout=15):
+    """Fetch the latest `limit` snapshots from Bitnodes API.
+    Returns list sorted newest first. Each item is the JSON object returned by Bitnodes for the snapshot summary.
+    """
+    params = {"limit": limit}
+    try:
+        resp = requests.get(BITNODES_SNAPSHOTS, params=params, timeout=timeout)
+        data = resp.json()
+        # bitnodes returns object with 'results' (list)
+        results = data.get('results') if isinstance(data, dict) else data
+        if isinstance(results, list) and len(results) >= 1:
+            return results
+        # fallback: try latest endpoint
+        resp2 = requests.get(BITNODES_LATEST, timeout=timeout)
+        data2 = resp2.json()
+        # wrap it
+        return [data2]
+    except Exception as e:
+        st.session_state['bitnodes_error'] = str(e)
+        return []
+
+@st.cache_data(ttl=600)
+def fetch_coingecko_prices(symbols):
+    ids = ','.join([COINGECKO_IDS[s] for s in symbols if s in COINGECKO_IDS])
+    params = {
+        'ids': ids,
+        'vs_currencies': 'usd',
+        'include_24hr_change': 'true'
+    }
+    try:
+        r = requests.get(COINGECKO_SIMPLE, params=params, timeout=15)
+        return r.json()
+    except Exception as e:
+        st.session_state['coingecko_error'] = str(e)
+        return {}
+
+
+def safe_get(d, *keys, default=None):
+    cur = d
+    for k in keys:
+        if cur is None:
+            return default
+        if isinstance(cur, dict) and k in cur:
+            cur = cur[k]
         else:
-            # If network is sideways, use Tor trend bias
-            if tor_signal == "BULLISH":
-                final_signal = "BUY"
-            elif tor_signal == "BEARISH":
-                final_signal = "SELL"
-            else:
-                final_signal = "SIDEWAYS"
-        
-        return {
-            'tor_trend': tor_trend,
-            'tor_signal': tor_signal,
-            'tor_emoji': tor_emoji,
-            'network_signal': network_signal_value,
-            'network_signal_type': network_signal,
-            'final_signal': final_signal,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'node_metrics': node_metrics
-        }
-    
-    def get_all_signals(self) -> Tuple[List[Dict], Dict]:
-        """Get signals for all coins based on Bitcoin's signal"""
-        bitcoin_signal = self.get_bitcoin_signal()
-        prices = self.fetch_prices()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        signals = []
-        for coin in self.coins:
-            coin_price = prices.get(coin, {}).get('price', 0)
-            change_24h = prices.get(coin, {}).get('change_24h', 0)
-            
-            signals.append({
-                "coin": coin,
-                "signal": bitcoin_signal['final_signal'],
-                "price": coin_price,
-                "change_24h": change_24h,
-                "time": current_time
-            })
-            
-        return signals, bitcoin_signal
+            return default
+    return cur
 
-def create_network_visualization(bitcoin_signal: Dict, node_metrics: Dict) -> go.Figure:
-    """Create network visualization using actual data"""
-    fig = make_subplots(
-        rows=1, cols=2,
-        specs=[[{"type": "indicator"}, {"type": "indicator"}]],
-        subplot_titles=("Network Growth", "Tor Privacy Trend")
-    )
-    
-    # Network Growth Gauge
-    network_value = bitcoin_signal['network_signal']
-    fig.add_trace(go.Indicator(
-        mode = "gauge+number+delta",
-        value = network_value,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "NETWORK GROWTH %"},
-        delta = {'reference': 0},
-        gauge = {
-            'axis': {'range': [-1, 1]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [-1, -0.1], 'color': "red"},
-                {'range': [-0.1, 0.1], 'color': "yellow"},
-                {'range': [0.1, 1], 'color': "green"}
-            ],
-            'threshold': {
-                'line': {'color': "white", 'width': 4},
-                'thickness': 0.75,
-                'value': network_value
-            }
-        }
-    ), row=1, col=1)
-    
-    # Tor Trend Gauge
-    tor_value = bitcoin_signal['tor_trend']
-    fig.add_trace(go.Indicator(
-        mode = "gauge+number+delta",
-        value = tor_value,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "TOR TREND %"},
-        delta = {'reference': 0},
-        gauge = {
-            'axis': {'range': [-5, 5]},
-            'bar': {'color': "purple"},
-            'steps': [
-                {'range': [-5, -0.5], 'color': "green"},
-                {'range': [-0.5, 0.5], 'color': "gray"},
-                {'range': [0.5, 5], 'color': "red"}
-            ]
-        }
-    ), row=1, col=2)
-    
-    fig.update_layout(
-        height=300,
-        margin=dict(l=50, r=50, t=50, b=50),
-        paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="white")
-    )
-    
-    return fig
 
-def main():
-    st.set_page_config(
-        page_title="Abdullah's Bitnode Tracker",
-        page_icon="₿",
-        layout="wide",
-        initial_sidebar_state="collapsed"
-    )
-    
-    # Futuristic CSS
-    st.markdown("""
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
-        
-        .main-header {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 3.5rem;
-            background: linear-gradient(45deg, #00D4FF, #0099FF, #0066FF, #0033FF);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-align: center;
-            margin-bottom: 1rem;
-            font-weight: 900;
-            text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
-        }
-        
-        .sub-header {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 1.8rem;
-            color: #00D4FF;
-            margin: 2rem 0 1rem 0;
-            border-bottom: 2px solid #00D4FF;
-            padding-bottom: 0.5rem;
-        }
-        
-        .metric-card {
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
-            border: 1px solid #00D4FF;
-            border-radius: 15px;
-            padding: 1.5rem;
-            margin: 0.5rem 0;
-            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
-            backdrop-filter: blur(10px);
-        }
-        
-        .buy-signal { 
-            color: #00FF88 !important; 
-            font-weight: 900;
-            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-        }
-        .sell-signal { 
-            color: #FF4B4B !important; 
-            font-weight: 900;
-            text-shadow: 0 0 10px rgba(255, 75, 75, 0.5);
-        }
-        .sideways-signal { 
-            color: #FFD700 !important; 
-            font-weight: 900;
-            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-        }
-        
-        .refresh-button {
-            background: linear-gradient(45deg, #00D4FF, #0099FF);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            padding: 0.75rem 2rem;
-            font-family: 'Orbitron', sans-serif;
-            font-weight: 700;
-            font-size: 1.1rem;
-            margin-bottom: 2rem;
-            width: 100%;
-            transition: all 0.3s ease;
-        }
-        
-        .positive-change { color: #00FF88; }
-        .negative-change { color: #FF4B4B; }
-        
-        .node-metric {
-            text-align: center;
-            padding: 1rem;
-        }
-        
-        .node-metric-value {
-            font-size: 2rem;
-            font-weight: 900;
-            font-family: 'Orbitron', sans-serif;
-            color: #00D4FF;
-        }
-        
-        .node-metric-label {
-            font-size: 0.9rem;
-            color: #888;
-            margin-top: 0.5rem;
-        }
-        
-        .node-change-positive {
-            color: #00FF88;
-            font-weight: bold;
-        }
-        
-        .node-change-negative {
-            color: #FF4B4B;
-            font-weight: bold;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # Main Header
-    st.markdown('<h1 class="main-header">ABDULLAH\'S BITNODE TRACKER</h1>', unsafe_allow_html=True)
-    
-    # Refresh Button at Top
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 FORCE REFRESH DATA", key="top_refresh", use_container_width=True):
-            st.session_state.last_update = 0  # Force refresh
-            st.rerun()
-    
-    # Initialize tracker
-    if 'tracker' not in st.session_state:
-        st.session_state.tracker = BitnodeTracker()
-        st.session_state.last_update = None
-    
-    tracker = st.session_state.tracker
-    
-    # Auto-refresh logic
-    refresh_interval = 300  # 5 minutes
-    current_time = time.time()
-    
-    if (st.session_state.last_update is None or 
-        current_time - st.session_state.last_update > refresh_interval):
-        
-        with st.spinner("🔄 CONNECTING TO BITNODE NETWORK..."):
-            tracker.fetch_bitnode_data()
-        st.session_state.last_update = current_time
-    
-    # Fetch data
-    signals, bitcoin_signal = tracker.get_all_signals()
-    node_metrics = bitcoin_signal['node_metrics']
-    
-    # Top Metrics Row
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("🎯 MASTER SIGNAL", bitcoin_signal['final_signal'])
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("🌐 TOTAL NODES", 
-                 f"{node_metrics['current_total']:,}",
-                 f"{node_metrics['total_change']:+,}")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("📡 NETWORK TREND", f"{bitcoin_signal['network_signal']:+.3f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("🕶️ TOR TREND", f"{bitcoin_signal['tor_trend']:+.3f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Node Metrics Section
-    st.markdown('<div class="sub-header">BITCOIN NETWORK NODE ANALYTICS</div>', unsafe_allow_html=True)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown('<div class="metric-card node-metric">', unsafe_allow_html=True)
-        st.markdown(f'<div class="node-metric-value">{node_metrics["current_tor"]:,}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="node-metric-label">CURRENT TOR NODES</div>', unsafe_allow_html=True)
-        change_class = "node-change-positive" if node_metrics["tor_change"] >= 0 else "node-change-negative"
-        change_emoji = "📈" if node_metrics["tor_change"] >= 0 else "📉"
-        st.markdown(f'<div class="{change_class}">{change_emoji} {node_metrics["tor_change"]:+,}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="metric-card node-metric">', unsafe_allow_html=True)
-        st.markdown(f'<div class="node-metric-value">{node_metrics["previous_tor"]:,}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="node-metric-label">PREVIOUS TOR NODES</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown('<div class="metric-card node-metric">', unsafe_allow_html=True)
-        st.markdown(f'<div class="node-metric-value">{node_metrics["current_normal"]:,}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="node-metric-label">CURRENT NORMAL NODES</div>', unsafe_allow_html=True)
-        change_class = "node-change-positive" if node_metrics["normal_change"] >= 0 else "node-change-negative"
-        change_emoji = "📈" if node_metrics["normal_change"] >= 0 else "📉"
-        st.markdown(f'<div class="{change_class}">{change_emoji} {node_metrics["normal_change"]:+,}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown('<div class="metric-card node-metric">', unsafe_allow_html=True)
-        st.markdown(f'<div class="node-metric-value">{node_metrics["previous_normal"]:,}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="node-metric-label">PREVIOUS NORMAL NODES</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Network Visualization
-    st.markdown('<div class="sub-header">NETWORK ANALYTICS DASHBOARD</div>', unsafe_allow_html=True)
-    fig = create_network_visualization(bitcoin_signal, node_metrics)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Trading Signals Table
-    st.markdown('<div class="sub-header">CRYPTO SIGNALS MATRIX</div>', unsafe_allow_html=True)
-    
-    # Create enhanced DataFrame
-    df_data = []
-    for signal in signals:
-        change_color = "positive-change" if signal['change_24h'] > 0 else "negative-change"
-        change_emoji = "🟢" if signal['change_24h'] > 0 else "🔴"
-        
-        df_data.append({
-            'COIN': f"🪙 {signal['coin']}",
-            'PRICE': f"${signal['price']:,.2f}" if signal['price'] > 0 else "N/A",
-            '24H CHANGE': f"<span class='{change_color}'>{change_emoji} {signal['change_24h']:+.2f}%</span>",
-            'SIGNAL': signal['signal'],
-            'TIME': signal['time']
-        })
-    
-    df = pd.DataFrame(df_data)
-    
-    # Display styled table
-    st.markdown(df.to_html(escape=False, index=False), unsafe_allow_html=True)
-    
-    # Signal Distribution
-    st.markdown('<div class="sub-header">SIGNAL DISTRIBUTION</div>', unsafe_allow_html=True)
-    
-    buy_count = len([s for s in signals if s['signal'] == 'BUY'])
-    sell_count = len([s for s in signals if s['signal'] == 'SELL'])
-    sideways_count = len([s for s in signals if s['signal'] == 'SIDEWAYS'])
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown(f'<div class="metric-card" style="text-align: center;"><h3 class="buy-signal">BUY SIGNALS</h3><h2>{buy_count}</h2></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown(f'<div class="metric-card" style="text-align: center;"><h3 class="sell-signal">SELL SIGNALS</h3><h2>{sell_count}</h2></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown(f'<div class="metric-card" style="text-align: center;"><h3 class="sideways-signal">SIDEWAYS</h3><h2>{sideways_count}</h2></div>', unsafe_allow_html=True)
-    
-    # Footer
-    st.markdown("---")
-    footer_col1, footer_col2, footer_col3 = st.columns(3)
-    
-    with footer_col1:
-        st.write(f"**LAST UPDATE:** {bitcoin_signal['timestamp']}")
-    with footer_col2:
-        st.write("**REFRESH CYCLE:** 5 MINUTES")
-    with footer_col3:
-        st.write("**NETWORK STATUS:** 🟢 LIVE")
+# -------------------------
+# Top bar: title + refresh
+# -------------------------
+col1, col2 = st.columns([3,1])
+with col1:
+    st.markdown('<div class="title">Abdullah\'s Bitnode Tracker</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle">Network-driven cryptocurrency signals — BTC is master</div>', unsafe_allow_html=True)
+with col2:
+    if st.button('Refresh', key='manual_refresh'):
+        st.experimental_rerun()
 
-if __name__ == "__main__":
-    main()
+st.markdown("---")
+
+# -------------------------
+# Fetch data
+# -------------------------
+snapshots = fetch_bitnodes_snapshots(limit=2)
+prices_raw = fetch_coingecko_prices(TRACK_COINS)
+
+now = datetime.utcnow()
+
+# Determine current and previous snapshot
+if len(snapshots) >= 2:
+    current_snap = snapshots[0]
+    previous_snap = snapshots[1]
+elif len(snapshots) == 1:
+    current_snap = snapshots[0]
+    previous_snap = {}
+else:
+    current_snap = {}
+    previous_snap = {}
+
+# Helper to extract counts with fallbacks
+def extract_counts(snap):
+    # Try common keys
+    total = safe_get(snap, 'nodes') or safe_get(snap, 'total_nodes') or safe_get(snap, 'total')
+    onion = safe_get(snap, 'onion') or safe_get(snap, 'tor') or safe_get(snap, 'onion_nodes')
+    full = safe_get(snap, 'full_nodes') or safe_get(snap, 'reachable_nodes') or total
+    pruned = safe_get(snap, 'pruned_nodes') or safe_get(snap, 'pruned') or 0
+    # If nodes is a dict of node entries, compute counts
+    if isinstance(total, dict):
+        total = len(total)
+    try:
+        total = int(total) if total is not None else None
+    except:
+        total = None
+    if isinstance(onion, dict):
+        onion = len(onion)
+    try:
+        onion = int(onion) if onion is not None else 0
+    except:
+        onion = 0
+    try:
+        full = int(full) if full is not None else (total or 0)
+    except:
+        full = total or 0
+    try:
+        pruned = int(pruned)
+    except:
+        pruned = 0
+    return {
+        'total': total or 0,
+        'onion': onion,
+        'full': full,
+        'pruned': pruned
+    }
+
+cur_counts = extract_counts(current_snap)
+prev_counts = extract_counts(previous_snap)
+
+# Calculate percentages
+def pct(part, whole):
+    try:
+        return (part/whole)*100 if whole else 0
+    except:
+        return 0
+
+cur_tor_pct = pct(cur_counts['onion'], cur_counts['total'])
+prev_tor_pct = pct(prev_counts['onion'], prev_counts['total'])
+
+# Tor Trend
+tor_trend = None
+tor_trend_label = 'NEUTRAL'
+try:
+    if prev_tor_pct == 0:
+        tor_trend = 0.0
+    else:
+        tor_trend = (cur_tor_pct - prev_tor_pct) / prev_tor_pct
+    if tor_trend > 0.0001:
+        tor_trend_label = 'SELL'  # More privacy usage -> bearish
+    elif tor_trend < -0.0001:
+        tor_trend_label = 'BUY'
+    else:
+        tor_trend_label = 'NEUTRAL'
+except Exception:
+    tor_trend = None
+    tor_trend_label = 'NEUTRAL'
+
+# Network Signal
+active_nodes = cur_counts.get('full') or cur_counts.get('total')
+total_nodes = cur_counts.get('total') or 1
+prev_total_nodes = prev_counts.get('total') or total_nodes
+
+signal = None
+signal_label = 'SIDEWAYS'
+try:
+    change_ratio = ((total_nodes - prev_total_nodes) / prev_total_nodes) if prev_total_nodes else 0
+    signal = (active_nodes / total_nodes) * change_ratio if total_nodes else 0
+    if signal > 0.01:
+        signal_label = 'BUY'
+    elif signal < -0.01:
+        signal_label = 'SELL'
+    else:
+        signal_label = 'SIDEWAYS'
+except Exception:
+    signal = None
+    signal_label = 'SIDEWAYS'
+
+# BTC master signal: combine tor_trend and network signal according to spec.
+# We'll prioritize Network Signal thresholds, but tor_trend inverts buy/sell logic described: Tor Trend >0 => SELL
+
+btc_signal = 'SIDEWAYS'
+# Merge rules: if either metric strongly indicates BUY or SELL, use that. Network signal has primary thresholds.
+if signal_label in ['BUY','SELL']:
+    btc_signal = signal_label
+else:
+    btc_signal = tor_trend_label if tor_trend_label in ['BUY','SELL'] else 'SIDEWAYS'
+
+# Build JSON output for all coins
+output = []
+for coin in TRACK_COINS:
+    coin_id = COINGECKO_IDS.get(coin)
+    price = None
+    change24 = None
+    if coin_id and prices_raw.get(coin_id):
+        price = prices_raw[coin_id].get('usd')
+        change24 = prices_raw[coin_id].get('usd_24h_change')
+    signal_for_coin = btc_signal if coin != 'BTC' else btc_signal
+    output.append({
+        'coin': coin,
+        'signal': signal_for_coin,
+        'price': round(price, 6) if isinstance(price, (int,float)) else None,
+        'change_24h': round(change24, 3) if isinstance(change24, (int,float)) else None,
+        'time': now.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# -------------------------
+# UI layout
+# -------------------------
+left, right = st.columns([2,1])
+with left:
+    st.markdown('<div class="neon-box">', unsafe_allow_html=True)
+    st.markdown(f"**Master BTC Signal:** <span class='{ 'signal-buy' if btc_signal=='BUY' else 'signal-sell' if btc_signal=='SELL' else 'signal-side'}'>{btc_signal}</span>")
+    st.markdown(f"**Signal (network formula):** {signal_label} — value {signal if signal is not None else 'N/A'}")
+    st.markdown(f"**Tor Trend:** {tor_trend_label} — value {round(tor_trend,6) if tor_trend is not None else 'N/A'}")
+    st.markdown('---')
+    st.markdown('**Node tracking (current vs previous)**')
+    st.write('Current Total Nodes: ', cur_counts['total'], '  ', 'Previous Total Nodes:', prev_counts['total'])
+    st.write('Current Tor (.onion) Nodes: ', cur_counts['onion'], '  ', 'Previous Tor Nodes:', prev_counts['onion'])
+    # arrows
+    def arrow(a,b):
+        if b is None:
+            return ''
+        if a > b:
+            return '📈'
+        elif a < b:
+            return '📉'
+        else:
+            return '➡️'
+    st.write('Tor change: ', arrow(cur_counts['onion'], prev_counts['onion']))
+    st.write('Normal nodes change: ', arrow(cur_counts['total']-cur_counts['onion'], prev_counts['total']-prev_counts['onion']))
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with right:
+    st.markdown('<div class="neon-box">', unsafe_allow_html=True)
+    st.markdown('**Snapshot times**')
+    cs_time = safe_get(current_snap, 'snapshot_date') or safe_get(current_snap, 'timestamp') or 'N/A'
+    ps_time = safe_get(previous_snap, 'snapshot_date') or safe_get(previous_snap, 'timestamp') or 'N/A'
+    st.write('Current snapshot:', cs_time)
+    st.write('Previous snapshot:', ps_time)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('---')
+
+# Signals table
+signals_df = pd.DataFrame(output)
+
+# Display table with styling
+st.markdown('<div class="neon-box">', unsafe_allow_html=True)
+st.write('Signals and prices')
+
+# Format the table
+def format_signal_cell(s):
+    if s == 'BUY':
+        return f"BUY"
+    if s == 'SELL':
+        return f"SELL"
+    return s
+
+st.dataframe(signals_df.style.format({'price': '{:.6f}', 'change_24h': '{:.3f}'}), use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# JSON output (as required)
+st.markdown('---')
+st.markdown('**JSON Output (export-ready)**')
+st.code(json.dumps(output, indent=2), language='json')
+
+# Error indicators
+if 'bitnodes_error' in st.session_state:
+    st.error('Bitnodes API error: ' + st.session_state['bitnodes_error'])
+if 'coingecko_error' in st.session_state:
+    st.error('CoinGecko API error: ' + st.session_state['coingecko_error'])
+
+# Footer: short usage tips
+st.markdown('<div class="small">Auto-refresh: every 5 minutes. API results cached for 10 minutes. BTC is master signal; all listed alts follow BTC.</div>', unsafe_allow_html=True)
+
+# End of app
