@@ -683,44 +683,6 @@ def main():
     else:
         st.info("📱 Tap 'UPDATE NODE DATA' above to load network analysis!")
     
-    # Futuristic Explanation Section
-    with st.expander("🔮 UNDERSTANDING TOR TREND ANALYSIS", expanded=False):
-        st.markdown("""
-        <div style="font-family: Rajdhani; color: #ffffff;">
-        <h3 style="color: #00ffff; font-family: Orbitron;">🎯 TOR TREND ANALYZER FORMULA:</h3>
-        <div style="background: rgba(0, 255, 255, 0.1); padding: 1rem; border-radius: 10px; border-left: 4px solid #00ffff;">
-        <code style="color: #00ffff; font-family: 'Courier New', monospace; font-size: 1.1rem;">
-        Tor Trend = (Current Tor % - Previous Tor %) ÷ Previous Tor %
-        </code>
-        </div>
-        
-        <h3 style="color: #ff00ff; font-family: Orbitron; margin-top: 1.5rem;">📈 MARKET BIAS INTERPRETATION:</h3>
-        <div style="background: rgba(255, 0, 255, 0.1); padding: 1rem; border-radius: 10px; border-left: 4px solid #ff00ff;">
-        <ul style="color: #ffffff;">
-            <li><strong>BEARISH/SELL BIAS (📉)</strong>: Tor Trend > 0 (More privacy = Sell signal)</li>
-            <li><strong>BULLISH/BUY BIAS (📈)</strong>: Tor Trend < 0 (Less privacy = Buy signal)</li>  
-            <li><strong>NEUTRAL (➡️)</strong>: Tor Trend ≈ 0 (Stable privacy = Neutral)</li>
-        </ul>
-        </div>
-        
-        <h3 style="color: #00ff7f; font-family: Orbitron; margin-top: 1.5rem;">💡 WHY THIS WORKS:</h3>
-        <div style="background: rgba(0, 255, 127, 0.1); padding: 1rem; border-radius: 10px; border-left: 4px solid #00ff7f;">
-        <ul style="color: #ffffff;">
-            <li>Increasing Tor % = More privacy = Often precedes price drops</li>
-            <li>Decreasing Tor % = Less privacy = Often precedes price rises</li>
-            <li>Based on the observation that privacy spikes correlate with bearish sentiment</li>
-        </ul>
-        </div>
-        
-        <h3 style="color: #ffd700; font-family: Orbitron; margin-top: 1.5rem;">⚡ NETWORK TREND SIGNAL FORMULA:</h3>
-        <div style="background: rgba(255, 215, 0, 0.1); padding: 1rem; border-radius: 10px; border-left: 4px solid #ffd700;">
-        <code style="color: #ffd700; font-family: 'Courier New', monospace; font-size: 1.1rem;">
-        Signal = (Active Nodes ÷ Total Nodes) × ((Current Total Nodes − Previous Total Nodes) ÷ Previous Total Nodes)
-        </code>
-        </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
     # Auto-refresh suggestion
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown("""
