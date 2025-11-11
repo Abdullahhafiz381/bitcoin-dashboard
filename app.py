@@ -2,329 +2,362 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime, timedelta
 import time
 import json
-import math
-import streamlit.components.v1 as components
 
-# -------------------------
-# Config
-# -------------------------
-st.set_page_config(page_title="Abdullah's Bitnode Tracker", layout='wide')
-
-BITNODES_SNAPSHOTS = "https://bitnodes.io/api/v1/snapshots/"
-BITNODES_LATEST = "https://bitnodes.io/api/v1/snapshots/latest/"
-COINGECKO_SIMPLE = "https://api.coingecko.com/api/v3/simple/price"
-
-TRACK_COINS = ["BTC", "ETH", "LTC", "BCH", "SOL", "ADA", "AVAX", "DOGE", "DOT", "LINK", "BNB"]
-COINGECKO_IDS = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "LTC": "litecoin",
-    "BCH": "bitcoin-cash",
-    "SOL": "solana",
-    "ADA": "cardano",
-    "AVAX": "avalanche-2",
-    "DOGE": "dogecoin",
-    "DOT": "polkadot",
-    "LINK": "chainlink",
-    "BNB": "binancecoin",
-}
-
-# -------------------------
-# Styles - dark futuristic
-# -------------------------
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@400;700&display=swap');
-    .reportview-container {background: linear-gradient(180deg,#081124 0%, #0b1020 100%);} 
-    .stApp { color: #dbe9ff }
-    .neon-box { background: rgba(10,12,20,0.6); border-radius:12px; padding:16px; box-shadow: 0 8px 30px rgba(94,120,255,0.06); border:1px solid rgba(94,120,255,0.12);} 
-    .title {font-family: 'Orbitron', sans-serif; font-size:28px; color: #b8c7ff}
-    .subtitle {font-family: 'Rajdhani', sans-serif; color:#9fb0ff}
-    .small {font-size:12px; color:#9aa9d9}
-    .refresh-btn {display:flex; justify-content:flex-end}
-    .signal-buy { color: #7ef7a6; font-weight:700 }
-    .signal-sell { color: #ff8b8b; font-weight:700 }
-    .signal-side { color: #ffd97e; font-weight:700 }
-    </style>
-    
-    """,
-    unsafe_allow_html=True
+# Page configuration
+st.set_page_config(
+    page_title="Abdullah's Bitnode Tracker",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# JS auto refresh every 300000 ms (5 minutes)
-components.html("<script>setTimeout(()=>{ window.location.reload(); }, 300000);</script>", height=0)
-
-# -------------------------
-# Helper functions
-# -------------------------
-@st.cache_data(ttl=600)
-def fetch_bitnodes_snapshots(limit=2, timeout=15):
-    """Fetch the latest `limit` snapshots from Bitnodes API.
-    Returns list sorted newest first. Each item is the JSON object returned by Bitnodes for the snapshot summary.
-    """
-    params = {"limit": limit}
-    try:
-        resp = requests.get(BITNODES_SNAPSHOTS, params=params, timeout=timeout)
-        data = resp.json()
-        # bitnodes returns object with 'results' (list)
-        results = data.get('results') if isinstance(data, dict) else data
-        if isinstance(results, list) and len(results) >= 1:
-            return results
-        # fallback: try latest endpoint
-        resp2 = requests.get(BITNODES_LATEST, timeout=timeout)
-        data2 = resp2.json()
-        # wrap it
-        return [data2]
-    except Exception as e:
-        st.session_state['bitnodes_error'] = str(e)
-        return []
-
-@st.cache_data(ttl=600)
-def fetch_coingecko_prices(symbols):
-    ids = ','.join([COINGECKO_IDS[s] for s in symbols if s in COINGECKO_IDS])
-    params = {
-        'ids': ids,
-        'vs_currencies': 'usd',
-        'include_24hr_change': 'true'
+# Custom CSS for futuristic design
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+    
+    .main {
+        background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
+        color: #ffffff;
     }
-    try:
-        r = requests.get(COINGECKO_SIMPLE, params=params, timeout=15)
-        return r.json()
-    except Exception as e:
-        st.session_state['coingecko_error'] = str(e)
-        return {}
-
-
-def safe_get(d, *keys, default=None):
-    cur = d
-    for k in keys:
-        if cur is None:
-            return default
-        if isinstance(cur, dict) and k in cur:
-            cur = cur[k]
-        else:
-            return default
-    return cur
-
-
-# -------------------------
-# Top bar: title + refresh
-# -------------------------
-col1, col2 = st.columns([3,1])
-with col1:
-    st.markdown('<div class="title">Abdullah\'s Bitnode Tracker</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Network-driven cryptocurrency signals — BTC is master</div>', unsafe_allow_html=True)
-with col2:
-    if st.button('Refresh', key='manual_refresh'):
-        st.experimental_rerun()
-
-st.markdown("---")
-
-# -------------------------
-# Fetch data
-# -------------------------
-snapshots = fetch_bitnodes_snapshots(limit=2)
-prices_raw = fetch_coingecko_prices(TRACK_COINS)
-
-now = datetime.utcnow()
-
-# Determine current and previous snapshot
-if len(snapshots) >= 2:
-    current_snap = snapshots[0]
-    previous_snap = snapshots[1]
-elif len(snapshots) == 1:
-    current_snap = snapshots[0]
-    previous_snap = {}
-else:
-    current_snap = {}
-    previous_snap = {}
-
-# Helper to extract counts with fallbacks
-def extract_counts(snap):
-    # Try common keys
-    total = safe_get(snap, 'nodes') or safe_get(snap, 'total_nodes') or safe_get(snap, 'total')
-    onion = safe_get(snap, 'onion') or safe_get(snap, 'tor') or safe_get(snap, 'onion_nodes')
-    full = safe_get(snap, 'full_nodes') or safe_get(snap, 'reachable_nodes') or total
-    pruned = safe_get(snap, 'pruned_nodes') or safe_get(snap, 'pruned') or 0
-    # If nodes is a dict of node entries, compute counts
-    if isinstance(total, dict):
-        total = len(total)
-    try:
-        total = int(total) if total is not None else None
-    except:
-        total = None
-    if isinstance(onion, dict):
-        onion = len(onion)
-    try:
-        onion = int(onion) if onion is not None else 0
-    except:
-        onion = 0
-    try:
-        full = int(full) if full is not None else (total or 0)
-    except:
-        full = total or 0
-    try:
-        pruned = int(pruned)
-    except:
-        pruned = 0
-    return {
-        'total': total or 0,
-        'onion': onion,
-        'full': full,
-        'pruned': pruned
+    
+    .stApp {
+        background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
     }
+    
+    .header {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 3.5rem;
+        font-weight: 900;
+        background: linear-gradient(45deg, #00ffff, #ff00ff, #00ff00);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 1rem;
+        text-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+    }
+    
+    .subheader {
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 1.2rem;
+        color: #8892b0;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .signal-card {
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid #00ffff;
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
+    }
+    
+    .buy-signal {
+        border-color: #00ff00;
+        box-shadow: 0 0 25px rgba(0, 255, 0, 0.3);
+        background: rgba(0, 255, 0, 0.05);
+    }
+    
+    .sell-signal {
+        border-color: #ff4444;
+        box-shadow: 0 0 25px rgba(255, 68, 68, 0.3);
+        background: rgba(255, 68, 68, 0.05);
+    }
+    
+    .neutral-signal {
+        border-color: #ffaa00;
+        box-shadow: 0 0 25px rgba(255, 170, 0, 0.3);
+        background: rgba(255, 170, 0, 0.05);
+    }
+    
+    .refresh-btn {
+        background: linear-gradient(45deg, #00ffff, #0077ff);
+        border: none;
+        color: white;
+        padding: 12px 30px;
+        border-radius: 25px;
+        font-family: 'Rajdhani', sans-serif;
+        font-weight: 700;
+        font-size: 1.1rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
+    }
+    
+    .refresh-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 30px rgba(0, 255, 255, 0.6);
+    }
+    
+    .node-stats {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border: 1px solid rgba(0, 255, 255, 0.3);
+    }
+    
+    .price-positive {
+        color: #00ff00;
+        font-weight: bold;
+    }
+    
+    .price-negative {
+        color: #ff4444;
+        font-weight: bold;
+    }
+    
+    .metric-value {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #00ffff;
+    }
+    
+    .metric-label {
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.9rem;
+        color: #8892b0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-cur_counts = extract_counts(current_snap)
-prev_counts = extract_counts(previous_snap)
+class BitnodeTracker:
+    def __init__(self):
+        self.coins = ['bitcoin', 'ethereum', 'litecoin', 'bitcoin-cash', 'solana', 
+                     'cardano', 'avalanche-2', 'dogecoin', 'polkadot', 'chainlink', 'binancecoin']
+        self.coin_names = ['BTC', 'ETH', 'LTC', 'BCH', 'SOL', 'ADA', 'AVAX', 'DOGE', 'DOT', 'LINK', 'BNB']
+        
+    def get_bitnodes_data(self):
+        """Fetch real Bitnodes.io data"""
+        try:
+            # Current snapshot
+            current_url = "https://bitnodes.io/api/v1/snapshots/latest/"
+            current_response = requests.get(current_url, timeout=10)
+            current_data = current_response.json()
+            
+            # Previous snapshot (24 hours ago)
+            previous_timestamp = current_data['timestamp'] - 86400  # 24 hours in seconds
+            previous_url = f"https://bitnodes.io/api/v1/snapshots/{previous_timestamp}/"
+            previous_response = requests.get(previous_url, timeout=10)
+            previous_data = previous_response.json() if previous_response.status_code == 200 else current_data
+            
+            return current_data, previous_data
+        except Exception as e:
+            st.error(f"Error fetching Bitnodes data: {e}")
+            return None, None
+    
+    def calculate_tor_trend(self, current_data, previous_data):
+        """Calculate Tor Trend signal"""
+        try:
+            current_tor_nodes = sum(1 for node in current_data['nodes'].values() 
+                                  if isinstance(node, list) and len(node) > 7 and node[7] == 'Tor')
+            previous_tor_nodes = sum(1 for node in previous_data['nodes'].values() 
+                                   if isinstance(node, list) and len(node) > 7 and node[7] == 'Tor')
+            
+            current_total = len(current_data['nodes'])
+            previous_total = len(previous_data['nodes'])
+            
+            current_tor_pct = (current_tor_nodes / current_total) * 100
+            previous_tor_pct = (previous_tor_nodes / previous_total) * 100
+            
+            tor_trend = ((current_tor_pct - previous_tor_pct) / previous_tor_pct) * 100 if previous_tor_pct > 0 else 0
+            
+            return {
+                'current_tor': current_tor_nodes,
+                'previous_tor': previous_tor_nodes,
+                'current_total': current_total,
+                'previous_total': previous_total,
+                'tor_trend': tor_trend,
+                'signal': 'SELL' if tor_trend > 0.1 else 'BUY' if tor_trend < -0.1 else 'NEUTRAL'
+            }
+        except Exception as e:
+            st.error(f"Error calculating Tor trend: {e}")
+            return None
+    
+    def calculate_network_signal(self, current_data, previous_data):
+        """Calculate Network Signal"""
+        try:
+            current_total = len(current_data['nodes'])
+            previous_total = len(previous_data['nodes'])
+            
+            # Calculate active nodes (nodes that responded recently)
+            current_active = sum(1 for node in current_data['nodes'].values() 
+                               if isinstance(node, list) and len(node) > 2 and node[2] == 1)
+            
+            node_growth = (current_total - previous_total) / previous_total if previous_total > 0 else 0
+            active_ratio = current_active / current_total if current_total > 0 else 0
+            
+            signal = active_ratio * node_growth
+            
+            return {
+                'current_active': current_active,
+                'current_total': current_total,
+                'previous_total': previous_total,
+                'node_growth': node_growth,
+                'active_ratio': active_ratio,
+                'signal_value': signal,
+                'signal': 'BUY' if signal > 0.01 else 'SELL' if signal < -0.01 else 'SIDEWAYS'
+            }
+        except Exception as e:
+            st.error(f"Error calculating network signal: {e}")
+            return None
+    
+    def get_coingecko_prices(self):
+        """Fetch real-time prices from CoinGecko"""
+        try:
+            coin_ids = ','.join(self.coins)
+            url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_ids}&vs_currencies=usd&include_24h_change=true"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            
+            prices = []
+            for i, coin_id in enumerate(self.coins):
+                if coin_id in data:
+                    prices.append({
+                        'coin': self.coin_names[i],
+                        'price': data[coin_id]['usd'],
+                        'change_24h': data[coin_id]['usd_24h_change'],
+                        'time': datetime.now().strftime("%Y-%m-%d %H:%M")
+                    })
+            return prices
+        except Exception as e:
+            st.error(f"Error fetching price data: {e}")
+            return None
 
-# Calculate percentages
-def pct(part, whole):
-    try:
-        return (part/whole)*100 if whole else 0
-    except:
-        return 0
-
-cur_tor_pct = pct(cur_counts['onion'], cur_counts['total'])
-prev_tor_pct = pct(prev_counts['onion'], prev_counts['total'])
-
-# Tor Trend
-tor_trend = None
-tor_trend_label = 'NEUTRAL'
-try:
-    if prev_tor_pct == 0:
-        tor_trend = 0.0
-    else:
-        tor_trend = (cur_tor_pct - prev_tor_pct) / prev_tor_pct
-    if tor_trend > 0.0001:
-        tor_trend_label = 'SELL'  # More privacy usage -> bearish
-    elif tor_trend < -0.0001:
-        tor_trend_label = 'BUY'
-    else:
-        tor_trend_label = 'NEUTRAL'
-except Exception:
-    tor_trend = None
-    tor_trend_label = 'NEUTRAL'
-
-# Network Signal
-active_nodes = cur_counts.get('full') or cur_counts.get('total')
-total_nodes = cur_counts.get('total') or 1
-prev_total_nodes = prev_counts.get('total') or total_nodes
-
-signal = None
-signal_label = 'SIDEWAYS'
-try:
-    change_ratio = ((total_nodes - prev_total_nodes) / prev_total_nodes) if prev_total_nodes else 0
-    signal = (active_nodes / total_nodes) * change_ratio if total_nodes else 0
-    if signal > 0.01:
-        signal_label = 'BUY'
-    elif signal < -0.01:
-        signal_label = 'SELL'
-    else:
-        signal_label = 'SIDEWAYS'
-except Exception:
-    signal = None
-    signal_label = 'SIDEWAYS'
-
-# BTC master signal: combine tor_trend and network signal according to spec.
-# We'll prioritize Network Signal thresholds, but tor_trend inverts buy/sell logic described: Tor Trend >0 => SELL
-
-btc_signal = 'SIDEWAYS'
-# Merge rules: if either metric strongly indicates BUY or SELL, use that. Network signal has primary thresholds.
-if signal_label in ['BUY','SELL']:
-    btc_signal = signal_label
-else:
-    btc_signal = tor_trend_label if tor_trend_label in ['BUY','SELL'] else 'SIDEWAYS'
-
-# Build JSON output for all coins
-output = []
-for coin in TRACK_COINS:
-    coin_id = COINGECKO_IDS.get(coin)
-    price = None
-    change24 = None
-    if coin_id and prices_raw.get(coin_id):
-        price = prices_raw[coin_id].get('usd')
-        change24 = prices_raw[coin_id].get('usd_24h_change')
-    signal_for_coin = btc_signal if coin != 'BTC' else btc_signal
-    output.append({
-        'coin': coin,
-        'signal': signal_for_coin,
-        'price': round(price, 6) if isinstance(price, (int,float)) else None,
-        'change_24h': round(change24, 3) if isinstance(change24, (int,float)) else None,
-        'time': now.strftime('%Y-%m-%d %H:%M:%S')
-    })
-
-# -------------------------
-# UI layout
-# -------------------------
-left, right = st.columns([2,1])
-with left:
-    st.markdown('<div class="neon-box">', unsafe_allow_html=True)
-    st.markdown(f"**Master BTC Signal:** <span class='{ 'signal-buy' if btc_signal=='BUY' else 'signal-sell' if btc_signal=='SELL' else 'signal-side'}'>{btc_signal}</span>")
-    st.markdown(f"**Signal (network formula):** {signal_label} — value {signal if signal is not None else 'N/A'}")
-    st.markdown(f"**Tor Trend:** {tor_trend_label} — value {round(tor_trend,6) if tor_trend is not None else 'N/A'}")
-    st.markdown('---')
-    st.markdown('**Node tracking (current vs previous)**')
-    st.write('Current Total Nodes: ', cur_counts['total'], '  ', 'Previous Total Nodes:', prev_counts['total'])
-    st.write('Current Tor (.onion) Nodes: ', cur_counts['onion'], '  ', 'Previous Tor Nodes:', prev_counts['onion'])
-    # arrows
-    def arrow(a,b):
-        if b is None:
-            return ''
-        if a > b:
-            return '📈'
-        elif a < b:
-            return '📉'
-        else:
-            return '➡️'
-    st.write('Tor change: ', arrow(cur_counts['onion'], prev_counts['onion']))
-    st.write('Normal nodes change: ', arrow(cur_counts['total']-cur_counts['onion'], prev_counts['total']-prev_counts['onion']))
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with right:
-    st.markdown('<div class="neon-box">', unsafe_allow_html=True)
-    st.markdown('**Snapshot times**')
-    cs_time = safe_get(current_snap, 'snapshot_date') or safe_get(current_snap, 'timestamp') or 'N/A'
-    ps_time = safe_get(previous_snap, 'snapshot_date') or safe_get(previous_snap, 'timestamp') or 'N/A'
-    st.write('Current snapshot:', cs_time)
-    st.write('Previous snapshot:', ps_time)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('---')
-
-# Signals table
-signals_df = pd.DataFrame(output)
-
-# Display table with styling
-st.markdown('<div class="neon-box">', unsafe_allow_html=True)
-st.write('Signals and prices')
-
-# Format the table
-def format_signal_cell(s):
-    if s == 'BUY':
-        return f"BUY"
-    if s == 'SELL':
-        return f"SELL"
-    return s
-
-st.dataframe(signals_df.style.format({'price': '{:.6f}', 'change_24h': '{:.3f}'}), use_container_width=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-# JSON output (as required)
-st.markdown('---')
-st.markdown('**JSON Output (export-ready)**')
-st.code(json.dumps(output, indent=2), language='json')
-
-# Error indicators
-if 'bitnodes_error' in st.session_state:
-    st.error('Bitnodes API error: ' + st.session_state['bitnodes_error'])
-if 'coingecko_error' in st.session_state:
-    st.error('CoinGecko API error: ' + st.session_state['coingecko_error'])
-
-# Footer: short usage tips
-st.markdown('<div class="small">Auto-refresh: every 5 minutes. API results cached for 10 minutes. BTC is master signal; all listed alts follow BTC.</div>', unsafe_allow_html=True)
-
-# End of app
+def main():
+    # Initialize tracker
+    tracker = BitnodeTracker()
+    
+    # Header
+    st.markdown('<div class="header">Abdullah\'s Bitnode Tracker</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subheader">Professional Cryptocurrency Trading Signals Powered by Bitcoin Network Metrics</div>', unsafe_allow_html=True)
+    
+    # Refresh button at top
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button('🔄 REFRESH DATA', key='refresh', use_container_width=True):
+            st.rerun()
+    
+    # Auto-refresh every 5 minutes
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
+    
+    if time.time() - st.session_state.last_refresh > 300:  # 5 minutes
+        st.session_state.last_refresh = time.time()
+        st.rerun()
+    
+    # Fetch data
+    with st.spinner('🔄 Fetching real-time network data...'):
+        current_data, previous_data = tracker.get_bitnodes_data()
+        prices = tracker.get_coingecko_prices()
+    
+    if current_data and previous_data and prices:
+        # Calculate signals
+        tor_data = tracker.calculate_tor_trend(current_data, previous_data)
+        network_data = tracker.calculate_network_signal(current_data, previous_data)
+        
+        if tor_data and network_data:
+            # Determine master BTC signal
+            btc_signal = network_data['signal']  # Primary signal from network metrics
+            
+            # Display node statistics
+            st.markdown("---")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="node-stats">
+                    <div class="metric-label">Total Nodes</div>
+                    <div class="metric-value">{network_data['current_total']:,}</div>
+                    <div style="color: {'#00ff00' if network_data['current_total'] > network_data['previous_total'] else '#ff4444'}">
+                        {('📈' if network_data['current_total'] > network_data['previous_total'] else '📉')} 
+                        {abs(network_data['node_growth']*100):.2f}%
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="node-stats">
+                    <div class="metric-label">Active Nodes</div>
+                    <div class="metric-value">{network_data['current_active']:,}</div>
+                    <div class="metric-label">{network_data['active_ratio']*100:.1f}% of total</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="node-stats">
+                    <div class="metric-label">Tor Nodes</div>
+                    <div class="metric-value">{tor_data['current_tor']:,}</div>
+                    <div style="color: {'#ff4444' if tor_data['tor_trend'] > 0 else '#00ff00'}">
+                        {('📈' if tor_data['tor_trend'] > 0 else '📉')} 
+                        {abs(tor_data['tor_trend']):.2f}%
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown(f"""
+                <div class="node-stats">
+                    <div class="metric-label">Network Signal</div>
+                    <div class="metric-value" style="color: {'#00ff00' if btc_signal == 'BUY' else '#ff4444' if btc_signal == 'SELL' else '#ffaa00'}">
+                        {btc_signal}
+                    </div>
+                    <div class="metric-label">Strength: {abs(network_data['signal_value']*100):.3f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Display trading signals
+            st.markdown("---")
+            st.markdown("### 🎯 LIVE TRADING SIGNALS")
+            
+            # BTC first as master signal
+            btc_price = next((p for p in prices if p['coin'] == 'BTC'), None)
+            if btc_price:
+                signal_class = "buy-signal" if btc_signal == "BUY" else "sell-signal" if btc_signal == "SELL" else "neutral-signal"
+                
+                col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+                with col1:
+                    st.markdown(f"<h3>🎯 BITCOIN (BTC) - MASTER SIGNAL</h3>", unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"<h3 style='color: {'#00ff00' if btc_signal == 'BUY' else '#ff4444' if btc_signal == 'SELL' else '#ffaa00'}'>{btc_signal}</h3>", unsafe_allow_html=True)
+                with col3:
+                    st.markdown(f"<h3>${btc_price['price']:,.2f}</h3>", unsafe_allow_html=True)
+                with col4:
+                    change_color = "price-positive" if btc_price['change_24h'] > 0 else "price-negative"
+                    st.markdown(f"<h3 class='{change_color}'>{btc_price['change_24h']:+.2f}%</h3>", unsafe_allow_html=True)
+                with col5:
+                    st.markdown(f"<h3>{btc_price['time']}</h3>", unsafe_allow_html=True)
+            
+            # Altcoins following BTC signal
+            st.markdown("### 🔄 FOLLOWING COINS (Mirroring BTC Signal)")
+            
+            for price_data in prices:
+                if price_data['coin'] != 'BTC':
+                    signal_class = "buy-signal" if btc_signal == "BUY" else "sell-signal" if btc_signal == "SELL" else "neutral-signal"
+                    
+                    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+                    with col1:
+                        st.markdown(f"<h4>{price_data['coin']}</h4>", unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"<h4 style='color: {'#00ff00' if btc_signal == 'BUY' else '#ff4444' if btc_signal == 'SELL' else '#ffaa00'}'>{btc_signal}</h4>", unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f"<h4>${price_data['price']:,.2f}</h4>", unsafe_allow_html=True)
+                    with col4:
+                        change_color = "price-positive" if price_data['change_24h'] > 0 else "price-negative"
+                        st.markdown(f"<h4 class='{change_color}'>{price_data['change_24h']:+.2f}%</h4>", unsafe_allow_html=True)
+                    with col5:
+                        st.markdown(f"<h4>{price_data['time']}</h4>", unsafe_allow_html=True)
+            
+if __name__ == "__main__":
+    main()
